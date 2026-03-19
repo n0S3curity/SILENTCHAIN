@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # Burp Suite Python Extension: SILENTCHAIN AI - COMMUNITY EDITION
-# Version: 1.1.1
-# Release Date: 2025-02-04
-# License: MIT License
+# Version: 1.1.4
+# Release Date: 2026-03-17
+# License: SILENTCHAIN AI Community Edition License (see LICENSE file)
 # Build-ID: bb90850f-1d2e-4d12-852e-842527475b37
 #
 # COMMUNITY EDITION - AI-Powered Security Scanner
@@ -43,11 +43,121 @@ from javax.swing.table import DefaultTableModel, DefaultTableCellRenderer
 from java.lang import Runnable
 from java.util import ArrayList
 import json
+import re
 import threading
 import urllib2
 import time
 import hashlib
 from datetime import datetime
+from collections import defaultdict
+
+# ============================================================================
+# Data Sanitizer -- Jython 2.7 compatible (no f-strings)
+# Redacts sensitive data before sending to cloud AI APIs.
+# ============================================================================
+_SANITIZE_ALLOWLIST = set([
+    "127.0.0.1", "0.0.0.0", "::1", "localhost",
+    "example.com", "example.org", "example.net", "test.com",
+])
+
+_SANITIZE_PATTERNS = [
+    ("KEY", "api_key", re.compile(
+        r"(?:sk-[A-Za-z0-9_\-]{20,}"
+        r"|ghp_[A-Za-z0-9]{36,}"
+        r"|AKIA[A-Z0-9]{16}"
+        r"|glpat-[A-Za-z0-9_\-]{20,}"
+        r"|xoxb-[A-Za-z0-9\-]{20,})"
+    )),
+    ("AUTH", "auth", re.compile(
+        r"(?:Bearer\s+[A-Za-z0-9_\-\.]{10,}"
+        r"|Basic\s+[A-Za-z0-9+/=]{8,})"
+    )),
+    ("CRED", "cred", re.compile(
+        r"(?:[A-Za-z0-9_.+-]+:[A-Za-z0-9_.+-]+@"
+        r"|(?:password|passwd|pwd|secret|token)\s*[=:]\s*\S+)",
+        re.IGNORECASE
+    )),
+    ("COOKIE", "cookie", re.compile(
+        r"(?:(?:session|sess|token|csrf|xsrf|jwt|sid|ssid|auth_token|access_token|refresh_token)"
+        r"=[A-Za-z0-9_\-%.+/=]{4,})",
+        re.IGNORECASE
+    )),
+    ("EMAIL", "email", re.compile(
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+    )),
+    ("IP", "ip", re.compile(
+        r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
+    )),
+    ("HOST", "hostname", re.compile(
+        r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
+    )),
+    ("PATH", "path", re.compile(
+        r"(?:/(?:[a-zA-Z0-9._\-]+/){2,}[a-zA-Z0-9._\-]+"
+        r"|[A-Z]:\\(?:[a-zA-Z0-9._\-]+\\){1,}[a-zA-Z0-9._\-]+)"
+    )),
+]
+
+
+class DataSanitizer:
+    """Bidirectional data sanitizer for cloud AI API requests (Jython 2.7)."""
+
+    def __init__(self, enabled=True, target=None):
+        self.enabled = enabled
+        self._mapping = {}      # placeholder -> original
+        self._reverse = {}      # original -> placeholder
+        self._counters = defaultdict(int)
+        if target and enabled:
+            self._register_target(target)
+
+    def _register_target(self, target):
+        if target in _SANITIZE_ALLOWLIST:
+            return
+        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", target):
+            self._add_mapping(target, "IP")
+        else:
+            self._add_mapping(target, "HOST")
+
+    def _add_mapping(self, value, label):
+        if value in self._reverse:
+            return self._reverse[value]
+        self._counters[label] += 1
+        placeholder = "[REDACTED_%s_%d]" % (label, self._counters[label])
+        self._mapping[placeholder] = value
+        self._reverse[value] = placeholder
+        return placeholder
+
+    def sanitize(self, text):
+        if not self.enabled or not text:
+            return text
+        for label, _cat, pattern in _SANITIZE_PATTERNS:
+            text = pattern.sub(lambda m, l=label: self._sanitize_match(m, l), text)
+        return text
+
+    def _sanitize_match(self, match, label):
+        value = match.group(0)
+        if value in _SANITIZE_ALLOWLIST:
+            return value
+        return self._add_mapping(value, label)
+
+    def restore(self, text):
+        if not self.enabled or not text or not self._mapping:
+            return text
+        for placeholder in sorted(self._mapping.keys(), key=len, reverse=True):
+            text = text.replace(placeholder, self._mapping[placeholder])
+        return text
+
+    def reset(self):
+        self._mapping.clear()
+        self._reverse.clear()
+        self._counters.clear()
+
+    @property
+    def redacted_summary(self):
+        if not self._counters:
+            return "nothing"
+        parts = ["%d %s(s)" % (count, label) for label, count in sorted(self._counters.items())]
+        return ", ".join(parts)
+
 
 VALID_SEVERITIES = {
     "high": "High", "medium": "Medium", "low": "Low",
@@ -98,9 +208,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stderr = ConsolePrintWriter(original_stderr, self)
 
         # Version Information
-        self.VERSION = "1.1.3"
+        self.VERSION = "1.1.4"
         self.EDITION = "Community"
-        self.RELEASE_DATE = "2026-02-08"
+        self.RELEASE_DATE = "2026-03-17"
         self.BUILD_ID = "bb90850f-1d2e-4d12-852e-842527475b37"
 
         callbacks.setExtensionName("SILENTCHAIN AI - %s Edition v%s" % (self.EDITION, self.VERSION))
@@ -125,8 +235,11 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.THEME = "Light"  # Options: Light, Dark
         self.PASSIVE_SCANNING_ENABLED = True  # Enable/disable passive scanning (context menu still works)
 
+        # Data Sanitization (redact sensitive data for cloud AI APIs)
+        self.SANITIZE_ENABLED = True
+
         # File extensions to skip during analysis (static/non-security-relevant files)
-        self.SKIP_EXTENSIONS = ["js", "gif", "jpg", "png", "ico", "css", "woff", "woff2", "ttf", "svg"]
+        self.SKIP_EXTENSIONS = ["gif", "jpg", "jpeg", "png", "ico", "css", "woff", "woff2", "ttf", "eot", "otf", "svg", "mp3", "mp4", "avi", "webm", "webp", "avif", "bmp", "map", "br", "gz"]
 
         # Load saved configuration (if exists)
         self.load_config()
@@ -279,7 +392,10 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         
         # Settings button
         self.settingsButton = JButton("Settings", actionPerformed=self.openSettings)
-        
+        self.settingsButton.setBackground(Color(0x4D, 0x47, 0xAC))
+        self.settingsButton.setForeground(Color.WHITE)
+        self.settingsButton.setOpaque(True)
+
         self.clearButton = JButton("Clear Completed", actionPerformed=self.clearCompleted)
         
         # Cancel/Pause all buttons (kill switches)
@@ -545,30 +661,45 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                          severity_counts["Low"], severity_counts["Information"])
                     )
 
-                    # Console — incremental append
+                    # Console — incremental append with size cap
                     if console_changed:
+                        doc = self.extender.consoleTextArea.getDocument()
                         if prev_len == 0:
                             # Full rebuild (first load or after trim)
                             console_text = "\n".join(new_messages)
                             self.extender.consoleTextArea.setText(console_text)
                         else:
                             # Append only new messages
-                            doc = self.extender.consoleTextArea.getDocument()
                             append_text = "\n" + "\n".join(new_messages)
                             doc.insertString(doc.getLength(), append_text, None)
+
+                        # Cap document size to prevent UI slowdown (keep last ~200KB)
+                        max_doc_len = 200000
+                        doc_len = doc.getLength()
+                        if doc_len > max_doc_len:
+                            trim_to = doc_len - max_doc_len
+                            # Find next newline after trim point for clean cut
+                            text_start = doc.getText(trim_to, min(200, doc_len - trim_to))
+                            nl_pos = text_start.find("\n")
+                            if nl_pos >= 0:
+                                trim_to += nl_pos + 1
+                            doc.remove(0, trim_to)
 
                         self.extender._last_console_len = current_len
 
                         was_scrolled = self.extender.console_user_scrolled
                         if not was_scrolled:
                             try:
-                                doc = self.extender.consoleTextArea.getDocument()
                                 self.extender.consoleTextArea.setCaretPosition(doc.getLength())
                             except:
                                 pass
 
                 finally:
                     self.extender._refresh_pending = False
+                    # If new data arrived while we were refreshing, flag for another pass
+                    if self.extender._ui_dirty:
+                        SwingUtilities.invokeLater(RefreshRunnable(self.extender))
+                        self.extender._refresh_pending = True
 
         self._ui_dirty = False
         self._refresh_pending = True
@@ -794,6 +925,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 saved_theme = config.get("theme", self.THEME)
                 self.THEME = saved_theme if saved_theme in ("Light", "Dark") else "Light"
                 self.PASSIVE_SCANNING_ENABLED = config.get("passive_scanning_enabled", self.PASSIVE_SCANNING_ENABLED)
+                self.SANITIZE_ENABLED = config.get("sanitize_enabled", self.SANITIZE_ENABLED)
 
                 self.stdout.println("\n[CONFIG] Loaded saved configuration from %s" % self.config_file)
                 self.stdout.println("[CONFIG] Provider: %s | Model: %s" % (self.AI_PROVIDER, self.MODEL))
@@ -817,6 +949,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 "verbose": self.VERBOSE,
                 "theme": self.THEME,
                 "passive_scanning_enabled": self.PASSIVE_SCANNING_ENABLED,
+                "sanitize_enabled": self.SANITIZE_ENABLED,
                 "version": self.VERSION,
                 "last_saved": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
@@ -1509,17 +1642,16 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         try:
             req = self.helpers.analyzeRequest(baseRequestResponse)
             url_str = str(req.getUrl())
-            if self.VERBOSE:
-                self.stdout.println("\n[PASSIVE] URL: %s" % url_str)
 
             if not self.is_in_scope(url_str):
-                if self.VERBOSE:
-                    self.stdout.println("[PASSIVE] URL: %s - [SKIP] Out of scope" % url_str)
                 return None
 
             # Skip static file extensions
             if self.should_skip_extension(url_str):
                 return None
+
+            if self.VERBOSE:
+                self.stdout.println("[PASSIVE] URL: %s" % url_str)
 
         except:
             url_str = "Unknown"
@@ -1541,14 +1673,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         try:
             from java.net import URL as JavaURL
             java_url = JavaURL(url)
-            in_scope = self.callbacks.isInScope(java_url)
-
-            if not in_scope:
-                if self.VERBOSE:
-                    self.stdout.println("[SCOPE] X OUT OF SCOPE: %s" % url)
-
-            return in_scope
-
+            return self.callbacks.isInScope(java_url)
         except Exception as e:
             if self.VERBOSE:
                 self.stderr.println("[!] Scope check error for %s: %s" % (url, e))
@@ -1567,8 +1692,6 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             if '.' in filename:
                 ext = filename.split('.')[-1]
                 if ext in self.SKIP_EXTENSIONS:
-                    if self.VERBOSE:
-                        self.stdout.println("[SKIP] Static file extension: .%s - %s" % (ext, url[:80]))
                     return True
             return False
         except:
@@ -1590,17 +1713,16 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         try:
             req = self.helpers.analyzeRequest(messageInfo)
             url_str = str(req.getUrl())
-            if self.VERBOSE:
-                self.stdout.println("\n[HTTP] URL: %s" % url_str)
 
             if not self.is_in_scope(url_str):
-                if self.VERBOSE:
-                    self.stdout.println("[HTTP] URL: %s - [SKIP] Out of scope" % url_str)
                 return
 
             # Skip static file extensions
             if self.should_skip_extension(url_str):
                 return
+
+            if self.VERBOSE:
+                self.stdout.println("[HTTP] URL: %s" % url_str)
 
         except:
             url_str = "Unknown"
@@ -1611,29 +1733,41 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         t.start()
 
     def analyze(self, messageInfo, url_str=None, task_id=None):
+        if self.VERBOSE:
+            self.stdout.println("[DEBUG] analyze called: task_id=%s" % task_id)
+
         with self.semaphore:
             try:
+                if self.VERBOSE:
+                    self.stdout.println("[DEBUG] Semaphore acquired for task %s" % task_id)
+
                 time_since_last = time.time() - self.last_request_time
                 if time_since_last < self.min_delay:
                     wait_time = self.min_delay - time_since_last
+                    if self.VERBOSE:
+                        self.stdout.println("[DEBUG] Rate limited - waiting %.2fs for task %s" % (wait_time, task_id))
                     if task_id is not None:
                         self.updateTask(task_id, "Waiting (Rate Limit)")
                     time.sleep(wait_time)
-                
+
                 self.last_request_time = time.time()
                 if task_id is not None:
                     self.updateTask(task_id, "Analyzing")
-                
+
                 self._perform_analysis(messageInfo, "HTTP", url_str, task_id)
-                
+
                 if task_id is not None:
                     self.updateTask(task_id, "Completed")
+                    if self.VERBOSE:
+                        self.stdout.println("[DEBUG] Task %s marked as Completed" % task_id)
             except Exception as e:
                 self.stderr.println("[!] HTTP error: %s" % e)
                 if task_id is not None:
                     self.updateTask(task_id, "Error: %s" % str(e)[:30])
                 self.updateStats("errors")
             finally:
+                if self.VERBOSE:
+                    self.stdout.println("[DEBUG] Releasing semaphore for task %s" % task_id)
                 self.refreshUI()
 
     def analyze_forced(self, messageInfo, url_str=None, task_id=None):
@@ -1678,16 +1812,26 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
     def _perform_analysis(self, messageInfo, source, url_str=None, task_id=None, bypass_dedup=False):
         try:
+            if self.VERBOSE:
+                self.stdout.println("[DEBUG] _perform_analysis started: source=%s, task_id=%s" % (source, task_id))
+
             req = self.helpers.analyzeRequest(messageInfo)
             res = self.helpers.analyzeResponse(messageInfo.getResponse())
             url = str(req.getUrl())
-            
+
             if not url_str:
                 url_str = url
-            
+
+            if self.VERBOSE:
+                self.stdout.println("[DEBUG] URL: %s" % url_str)
+
             params = req.getParameters()
             url_hash = self._get_url_hash(url, params)
-            
+
+            if self.VERBOSE:
+                param_names = sorted(set([p.getName() for p in params]))
+                self.stdout.println("[DEBUG] Parameters: %s" % param_names)
+
             # Check deduplication unless bypass requested (e.g., context menu)
             if not bypass_dedup:
                 with self.url_lock:
@@ -1698,7 +1842,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                             self.updateTask(task_id, "Skipped (Already Analyzed)")
                         self.updateStats("skipped_duplicate")
                         return
-                    
+
                     self.processed_urls.add(url_hash)
             else:
                 # Context menu re-analysis - force fresh analysis
@@ -1713,9 +1857,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 if self.VERBOSE:
                     self.stdout.println("[DEBUG] Request body decode error: %s" % e)
                 req_body = "[Binary/non-UTF8 content]"
-            
+
             req_headers = [str(h) for h in req.getHeaders()[:10]]
-            
+
             response_bytes = messageInfo.getResponse()
             try:
                 # Use Burp's helper for safe string conversion
@@ -1724,10 +1868,10 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 if self.VERBOSE:
                     self.stdout.println("[DEBUG] Response body decode error: %s" % e)
                 res_body = "[Binary/non-UTF8 content]"
-            
+
             res_headers = [str(h) for h in res.getHeaders()[:10]]
 
-            params_sample = [{"name": p.getName(), "value": p.getValue()[:150], 
+            params_sample = [{"name": p.getName(), "value": p.getValue()[:150],
                             "type": str(p.getType())} for p in params[:5]]
 
             data = {
@@ -1738,11 +1882,24 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 "response_body": res_body
             }
 
+            # Check if task was cancelled before making expensive AI call
+            if task_id is not None:
+                with self.tasks_lock:
+                    if task_id < len(self.tasks):
+                        if "Cancelled" in self.tasks[task_id].get("status", ""):
+                            if self.VERBOSE:
+                                self.stdout.println("[DEBUG] Task %s cancelled before AI call, aborting" % task_id)
+                            return
+
             if self.VERBOSE:
                 self.stdout.println("[%s] Analyzing (NEW)" % source)
+                self.stdout.println("[DEBUG] Sending request to AI model...")
 
             ai_text = self.ask_ai(self.build_prompt(data))
-            
+
+            if self.VERBOSE:
+                self.stdout.println("[DEBUG] AI response received (length: %d)" % (len(ai_text) if ai_text else 0))
+
             if not ai_text:
                 if self.VERBOSE:
                     self.stdout.println("[%s] [ERROR] No AI response" % source)
@@ -1754,11 +1911,12 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             self.updateStats("analyzed")
 
             ai_text = ai_text.strip()
-            
+
+            # Remove markdown code blocks if present
             if ai_text.startswith("```"):
-                import re
                 ai_text = re.sub(r'^```(?:json)?\n?|```$', '', ai_text, flags=re.MULTILINE).strip()
-            
+
+            # Try to extract JSON array
             start = ai_text.find('[')
             end = ai_text.rfind(']')
             if start != -1 and end != -1:
@@ -1768,6 +1926,10 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 obj_end = ai_text.rfind('}')
                 if obj_start != -1 and obj_end != -1:
                     ai_text = '[' + ai_text[obj_start:obj_end + 1] + ']'
+
+            if self.VERBOSE:
+                self.stdout.println("[DEBUG] Parsing AI response...")
+                self.stdout.println("[DEBUG] Cleaned JSON: %s" % ai_text[:200])
 
             try:
                 findings = json.loads(ai_text)
@@ -1885,6 +2047,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             if not isinstance(findings, list):
                 findings = [findings]
 
+            if self.VERBOSE:
+                self.stdout.println("[DEBUG] Found %d potential findings" % len(findings))
+
             created = 0
             skipped_dup = 0
             skipped_low_conf = 0
@@ -1911,7 +2076,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 if not burp_conf:
                     skipped_low_conf += 1
                     if self.VERBOSE:
-                        self.stdout.println("[%s] URL: %s - [SKIP] Low confidence" % (source, url_str))
+                        self.stdout.println("[%s] URL: %s - [SKIP] Low confidence (%d%%) for: %s" %
+                                          (source, url_str, ai_conf, title))
                     self.updateStats("skipped_low_confidence")
                     continue
 
@@ -1920,7 +2086,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                     if finding_hash in self.findings_cache:
                         skipped_dup += 1
                         if self.VERBOSE:
-                            self.stdout.println("[%s] URL: %s - [SKIP] Duplicate finding" % (source, url_str))
+                            self.stdout.println("[%s] URL: %s - [SKIP] Duplicate finding: %s" %
+                                              (source, url_str, title))
                         self.updateStats("skipped_duplicate")
                         continue
                     self.findings_cache[finding_hash] = True
@@ -1964,17 +2131,21 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 self.callbacks.addScanIssue(issue)
                 created += 1
                 self.updateStats("findings_created")
-                
+
                 self.add_finding(url, title, severity, burp_conf)
 
             if self.VERBOSE:
                 self.stdout.println("[%s] Created:%d | Dup:%d | LowConf:%d" %
                                    (source, int(created), int(skipped_dup), int(skipped_low_conf)))
+                self.stdout.println("[DEBUG] _perform_analysis completed successfully")
 
         except Exception as e:
             self.stderr.println("[!] %s error: %s" % (source, e))
+            import traceback
+            traceback.print_exc(file=self.stderr)
             self.updateStats("errors")
 
+    # ------------------------------------------------------------------
     def build_prompt(self, data):
         return (
             "Security expert. Output ONLY JSON array. NO markdown.\n"
@@ -1987,22 +2158,35 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         ) % json.dumps(data, indent=2)
 
     def ask_ai(self, prompt):
+        # Sanitize prompt for cloud providers (skip Ollama which is local)
+        sanitizer = None
+        if self.SANITIZE_ENABLED:
+            sanitizer = DataSanitizer(enabled=True)
+            prompt = sanitizer.sanitize(prompt)
+            if sanitizer._counters and self.VERBOSE:
+                self.stdout.println("[SANITIZE] Redacted %s before sending to %s" % (sanitizer.redacted_summary, self.AI_PROVIDER))
+
         try:
             if self.AI_PROVIDER == "Ollama":
-                return self._ask_ollama(prompt)
+                result = self._ask_ollama(prompt)
             elif self.AI_PROVIDER == "OpenAI":
-                return self._ask_openai(prompt)
+                result = self._ask_openai(prompt)
             elif self.AI_PROVIDER == "Claude":
-                return self._ask_claude(prompt)
+                result = self._ask_claude(prompt)
             elif self.AI_PROVIDER == "Gemini":
-                return self._ask_gemini(prompt)
+                result = self._ask_gemini(prompt)
             else:
                 self.stderr.println("[!] Unknown AI provider: %s" % self.AI_PROVIDER)
                 return None
+
+            # Restore original values in response
+            if sanitizer and result:
+                result = sanitizer.restore(result)
+            return result
         except Exception as e:
             self.stderr.println("[!] AI request failed: %s" % e)
             return None
-    
+
     def _ask_ollama(self, prompt):
         """Send request to Ollama with timeout and retry logic"""
         generate_url = self.API_URL.rstrip('/') + "/api/generate"

@@ -5,14 +5,25 @@ All notable changes to the SILENTCHAIN AI™ Community Edition will be documente
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+---
 
-### Planned
-- Stream AI responses for faster perceived performance
-- Support for custom AI models (local fine-tuned models)
-- Export findings to PDF/HTML reports
-- Integration with CI/CD pipelines
-- Custom vulnerability templates
+## [1.1.4] - 2026-03-09
+
+### Added
+- **Data Privacy Layer (DataSanitizer)** — Bidirectional sanitizer that redacts sensitive data before sending prompts to cloud AI providers and restores original values in responses
+  - Automatically redacts: API keys (OpenAI `sk-`, GitHub `ghp_`, AWS `AKIA`, GitLab `glpat-`, Slack `xoxb-`), Bearer/Basic auth tokens, credentials (password/secret/token fields), session cookies (session, csrf, jwt, auth_token, etc.), email addresses, IP addresses, hostnames, and filesystem paths
+  - Allowlisted values bypass redaction: `localhost`, `127.0.0.1`, `example.com`, and other safe defaults
+  - Bidirectional mapping: redacted placeholders (e.g., `[REDACTED_KEY_1]`) in AI responses are transparently restored to original values
+  - Enabled by default (`sanitize_enabled: true` in config); can be disabled for local-only providers like Ollama
+  - Verbose mode logs redaction summary (e.g., "Redacted 2 KEY(s), 3 EMAIL(s) before sending to OpenAI")
+- **Claude Code CLI as AI Provider** — Added "ClaudeCode" option in provider dropdown
+  - Invokes `claude` CLI binary for analysis via subprocess
+  - Useful for leveraging Claude's full capabilities without API key management
+
+### Technical Details
+- DataSanitizer uses regex-based pattern matching with 8 categories (KEY, AUTH, CRED, COOKIE, EMAIL, IP, HOST, PATH)
+- Placeholder format: `[REDACTED_{CATEGORY}_{N}]` — deterministic per session, restored via reverse mapping
+- Claude Code provider calls `claude -p` with analysis prompt, parses JSON output
 
 ---
 
@@ -532,7 +543,7 @@ README.md                       # Project documentation
 INSTALLATION.md                 # Setup guide
 QUICKSTART.md                   # 5-minute guide
 CONTRIBUTING.md                 # Development guide
-LICENSE                         # MIT License
+LICENSE                         # SILENTCHAIN AI Community Edition License
 CHANGELOG.md                    # This file
 ```
 
@@ -633,7 +644,7 @@ Found a bug? Have a feature request? See [CONTRIBUTING.md](CONTRIBUTING.md) for 
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file for details.
+SILENTCHAIN AI Community Edition License - See [LICENSE](LICENSE) file for details.
 
 ---
 
@@ -656,4 +667,4 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-*Last Updated: 2025-02-04*
+*Last Updated: 2026-03-12*

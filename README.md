@@ -36,7 +36,7 @@
 
 Traditional security scanners rely on predefined signatures and patterns. **SILENTCHAIN AI™** goes beyond with:
 
-- **🧠 AI-Powered Analysis**: Leverages state-of-the-art language models (Ollama, OpenAI, Claude, Gemini) for intelligent vulnerability detection
+- **🧠 AI-Powered Analysis**: Leverages state-of-the-art language models (Ollama, OpenAI, Claude, Claude Code, Gemini) for intelligent vulnerability detection
 - **🎯 Context-Aware Detection**: Understands application logic and business context, not just pattern matching
 - **⚡ Real-Time Scanning**: Analyzes traffic as it flows through Burp's proxy
 - **📊 Professional Reporting**: Generates detailed findings with CWE, OWASP mappings, and remediation guidance
@@ -65,6 +65,7 @@ Traditional security scanners rely on predefined signatures and patterns. **SILE
 - **Ollama** (Local, free, privacy-focused)
 - **OpenAI** (GPT-4, GPT-3.5)
 - **Claude** (Anthropic)
+- **Claude Code** (Anthropic CLI)
 - **Gemini** (Google)
 
 #### 📋 **Smart Reporting**
@@ -103,6 +104,7 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
    - [Ollama](https://ollama.ai) (Free, local)
    - OpenAI API key
    - Claude API key
+   - [Claude Code](https://claude.ai/code) CLI (Anthropic)
    - Gemini API key
 
 ### Installation

@@ -20,11 +20,11 @@ Get up and running with SILENTCHAIN AI™ in under 5 minutes.
 ### Step 1: Download SILENTCHAIN
 
 ```bash
-git clone https://github.com/yourusername/silentchain-ai.git
+git clone https://github.com/silentchainai/SILENTCHAIN.git
 cd silentchain-ai
 ```
 
-Or download the latest release: [GitHub Releases](https://github.com/yourusername/silentchain-ai/releases)
+Or download the latest release: [GitHub Releases](https://github.com/silentchainai/SILENTCHAIN/releases)
 
 ### Step 2: Load in Burp Suite
 
@@ -154,7 +154,7 @@ curl http://localhost:11434/api/tags
 
 - 📚 [Full Documentation](README.md)
 - 💬 [Discord Community](https://discord.gg/silentchain)
-- 🐛 [Report Issues](https://github.com/yourusername/silentchain-ai/issues)
+- 🐛 [Report Issues](https://github.com/silentchainai/SILENTCHAIN/issues)
 - ✉️ support@silentchain.ai
 
 Happy hunting! 🔒🔗⛓️

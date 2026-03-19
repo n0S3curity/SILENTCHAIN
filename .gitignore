@@ -4,6 +4,9 @@
 .idea/
 .vscode/
 releases/
+tests/
+CLAUDE.md
+Makefile
 
 # Secrets and credentials — CRITICAL for AI API key safety
 .env
@@ -32,7 +35,7 @@ build/
 venv/
 env/
 .mypy_cache/
-.pytest_cache/
+_cache/
 .tox/
 .python-version
 
